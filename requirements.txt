@@ -1,0 +1,6 @@
+# [voice] aduce PyNaCl și davey (criptarea DAVE pe care Discord o cere pe canalele de voce).
+discord.py[voice]>=2.7,<3
+aiosqlite>=0.20
+# [default] aduce yt-dlp-ejs, necesar pentru YouTube. Actualizează des: pip install -U "yt-dlp[default]"
+yt-dlp[default]>=2026.10.26
+python-dotenv>=1.0
