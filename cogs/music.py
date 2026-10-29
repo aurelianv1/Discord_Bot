@@ -13,7 +13,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import discord
 import yt_dlp
@@ -349,27 +349,27 @@ class GuildPlayer:
 
 # --- Verificări pentru comenzi ------------------------------------------------------
 
-def _member_and_bot_channel(interaction: discord.Interaction) -> tuple[discord.Member, discord.VoiceClient]:
-    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-        raise app_commands.NoPrivateMessage()
-    vc = interaction.guild.voice_client
+def _connected_voice_client(ctx: commands.Context[DiscordBot]) -> discord.VoiceClient:
+    vc = ctx.voice_client
     if not isinstance(vc, discord.VoiceClient) or vc.channel is None:
-        raise app_commands.CheckFailure("Nu sunt conectat pe niciun canal de voce.")
-    return interaction.user, vc
+        raise commands.CheckFailure("Nu sunt conectat pe niciun canal de voce.")
+    return vc
 
 
 def same_voice_channel() -> Any:
     """Utilizatorul trebuie să fie pe același canal de voce cu botul."""
 
-    async def predicate(interaction: discord.Interaction) -> bool:
-        member, vc = _member_and_bot_channel(interaction)
-        if member.voice is None or member.voice.channel != vc.channel:
-            raise app_commands.CheckFailure(
+    async def predicate(ctx: commands.Context[DiscordBot]) -> bool:
+        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+            raise commands.NoPrivateMessage()
+        vc = _connected_voice_client(ctx)
+        if ctx.author.voice is None or ctx.author.voice.channel != vc.channel:
+            raise commands.CheckFailure(
                 f"Trebuie să fii pe același canal de voce cu mine ({vc.channel.mention})."
             )
         return True
 
-    return app_commands.check(predicate)
+    return commands.check(predicate)
 
 
 # --- Cog ---------------------------------------------------------------------------
@@ -390,11 +390,11 @@ class Music(commands.Cog):
     def _player_for(self, guild: discord.Guild) -> GuildPlayer | None:
         return self.players.get(guild.id)
 
-    def _require_player(self, interaction: discord.Interaction) -> GuildPlayer:
-        assert interaction.guild is not None
-        player = self._player_for(interaction.guild)
+    def _require_player(self, ctx: commands.Context[DiscordBot]) -> GuildPlayer:
+        assert ctx.guild is not None
+        player = self._player_for(ctx.guild)
         if player is None:
-            raise app_commands.CheckFailure("Nu se redă nimic acum.")
+            raise commands.CheckFailure("Nu se redă nimic acum.")
         return player
 
     # --- Ieșirea automată când botul rămâne singur ---------------------------------
@@ -449,53 +449,48 @@ class Music(commands.Cog):
 
     # --- Comenzi -------------------------------------------------------------------
 
-    @app_commands.command(name="play", description="Redă o melodie de pe YouTube (link sau nume)")
+    @commands.hybrid_command(name="play", aliases=["p"], description="Redă o melodie de pe YouTube (link sau nume)")
     @app_commands.describe(cautare="Un link YouTube sau numele melodiei")
-    @app_commands.guild_only()
-    async def play(self, interaction: discord.Interaction, cautare: app_commands.Range[str, 1, 300]) -> None:
-        guild = interaction.guild
-        member = interaction.user
+    @commands.guild_only()
+    async def play(self, ctx: commands.Context[DiscordBot], *, cautare: commands.Range[str, 1, 300]) -> None:
+        guild = ctx.guild
+        member = ctx.author
         assert guild is not None and isinstance(member, discord.Member)
 
         if member.voice is None or member.voice.channel is None:
-            await interaction.response.send_message(
-                "Intră mai întâi pe un canal de voce. 🎧", ephemeral=True
-            )
+            await ctx.send("Intră mai întâi pe un canal de voce. 🎧", ephemeral=True)
             return
         channel = member.voice.channel
         player = self._player_for(guild)
         vc = guild.voice_client
         if vc is not None and vc.channel != channel and player is not None and player.is_active:
-            await interaction.response.send_message(
+            await ctx.send(
                 f"Sunt deja folosit pe {vc.channel.mention}. Vino acolo sau așteaptă să termin.",
                 ephemeral=True,
             )
             return
         permissions = channel.permissions_for(guild.me)
         if not (permissions.connect and permissions.speak):
-            await interaction.response.send_message(
-                f"Nu am permisiunea să intru sau să vorbesc pe {channel.mention}.", ephemeral=True
-            )
+            await ctx.send(f"Nu am permisiunea să intru sau să vorbesc pe {channel.mention}.", ephemeral=True)
             return
         if player is not None and len(player.queue) >= MAX_QUEUE_SIZE:
-            await interaction.response.send_message(
-                f"Coada este plină (maxim {MAX_QUEUE_SIZE} melodii).", ephemeral=True
-            )
+            await ctx.send(f"Coada este plină (maxim {MAX_QUEUE_SIZE} melodii).", ephemeral=True)
             return
 
-        await interaction.response.defer(thinking=True)
-        try:
-            info = await extract_info(cautare)
-        except NoResultsError:
-            await interaction.followup.send(f"Nu am găsit nimic pentru **{cautare}**. 🔍")
-            return
-        except yt_dlp.utils.DownloadError as exc:
-            log.warning("yt-dlp a eșuat pentru %r: %s", cautare, exc)
-            await interaction.followup.send(
-                "Nu am putut încărca melodia. Poate fi privată, restricționată sau indisponibilă. "
-                "Dacă problema persistă, actualizează yt-dlp (`pip install -U yt-dlp`)."
-            )
-            return
+        # La slash command, typing() confirmă interacțiunea (căutarea poate dura câteva secunde).
+        async with ctx.typing():
+            try:
+                info = await extract_info(cautare)
+            except NoResultsError:
+                await ctx.send(f"Nu am găsit nimic pentru **{cautare}**. 🔍")
+                return
+            except yt_dlp.utils.DownloadError as exc:
+                log.warning("yt-dlp a eșuat pentru %r: %s", cautare, exc)
+                await ctx.send(
+                    "Nu am putut încărca melodia. Poate fi privată, restricționată sau indisponibilă. "
+                    "Dacă problema persistă, actualizează yt-dlp (`pip install -U \"yt-dlp[default]\"`)."
+                )
+                return
 
         track = Track.from_info(info, member)
 
@@ -508,81 +503,75 @@ class Music(commands.Cog):
                     await vc.move_to(channel)
             except (asyncio.TimeoutError, discord.ClientException) as exc:
                 log.warning("Nu mă pot conecta la %s: %s", channel, exc)
-                await interaction.followup.send("Nu m-am putut conecta la canalul de voce. Încearcă din nou.")
+                await ctx.send("Nu m-am putut conecta la canalul de voce. Încearcă din nou.")
                 return
 
             player = self._player_for(guild)
-            text_channel = interaction.channel
-            if not isinstance(text_channel, discord.abc.Messageable):
-                await interaction.followup.send("Nu pot trimite mesaje în acest canal.")
-                return
             if player is None:
-                player = GuildPlayer(self, guild, text_channel)
+                player = GuildPlayer(self, guild, ctx.channel)
                 self.players[guild.id] = player
-            player.text_channel = text_channel
+            player.text_channel = ctx.channel
 
             if player.is_active:
                 player.add(track)
-                await interaction.followup.send(
-                    embed=track.embed(f"➕ **Adăugată în coadă** pe poziția {len(player.queue)}")
-                )
+                await ctx.send(embed=track.embed(f"➕ **Adăugată în coadă** pe poziția {len(player.queue)}"))
             else:
                 track.announced = True
                 player.add(track)
-                await interaction.followup.send(embed=track.embed("🎶 **Acum se redă**"))
+                await ctx.send(embed=track.embed("🎶 **Acum se redă**"))
 
-    @app_commands.command(name="skip", description="Sari peste melodia curentă")
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="skip", aliases=["s"], description="Sari peste melodia curentă")
+    @commands.guild_only()
     @same_voice_channel()
-    async def skip(self, interaction: discord.Interaction) -> None:
-        player = self._require_player(interaction)
+    async def skip(self, ctx: commands.Context[DiscordBot]) -> None:
+        player = self._require_player(ctx)
         if player.current is None:
-            await interaction.response.send_message("Nu se redă nimic acum.", ephemeral=True)
+            await ctx.send("Nu se redă nimic acum.", ephemeral=True)
             return
         title = player.current.title
         player.skip()
-        await interaction.response.send_message(f"⏭️ Am sărit peste **{title}**.")
+        await ctx.send(f"⏭️ Am sărit peste **{title}**.")
 
-    @app_commands.command(name="pause", description="Pune melodia pe pauză")
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="pause", description="Pune melodia pe pauză")
+    @commands.guild_only()
     @same_voice_channel()
-    async def pause(self, interaction: discord.Interaction) -> None:
-        _, vc = _member_and_bot_channel(interaction)
+    async def pause(self, ctx: commands.Context[DiscordBot]) -> None:
+        vc = _connected_voice_client(ctx)
         if vc.is_paused():
-            await interaction.response.send_message("Melodia este deja pe pauză.", ephemeral=True)
+            await ctx.send("Melodia este deja pe pauză.", ephemeral=True)
         elif not vc.is_playing():
-            await interaction.response.send_message("Nu se redă nimic acum.", ephemeral=True)
+            await ctx.send("Nu se redă nimic acum.", ephemeral=True)
         else:
             vc.pause()
-            await interaction.response.send_message("⏸️ Pauză. Folosește `/resume` ca să continui.")
+            await ctx.send("⏸️ Pauză. Folosește `.resume` ca să continui.")
 
-    @app_commands.command(name="resume", description="Continuă melodia pusă pe pauză")
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="resume", description="Continuă melodia pusă pe pauză")
+    @commands.guild_only()
     @same_voice_channel()
-    async def resume(self, interaction: discord.Interaction) -> None:
-        _, vc = _member_and_bot_channel(interaction)
+    async def resume(self, ctx: commands.Context[DiscordBot]) -> None:
+        vc = _connected_voice_client(ctx)
         if not vc.is_paused():
-            await interaction.response.send_message("Melodia nu este pe pauză.", ephemeral=True)
+            await ctx.send("Melodia nu este pe pauză.", ephemeral=True)
         else:
             vc.resume()
-            await interaction.response.send_message("▶️ Continuăm!")
+            await ctx.send("▶️ Continuăm!")
 
-    @app_commands.command(name="stop", description="Oprește muzica și golește coada")
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="stop", description="Oprește muzica și golește coada")
+    @commands.guild_only()
     @same_voice_channel()
-    async def stop(self, interaction: discord.Interaction) -> None:
-        player = self._require_player(interaction)
+    async def stop(self, ctx: commands.Context[DiscordBot]) -> None:
+        player = self._require_player(ctx)
         player.loop_mode = LoopMode.OFF
         player.stop()
-        await interaction.response.send_message("⏹️ Am oprit muzica și am golit coada.")
+        await ctx.send("⏹️ Am oprit muzica și am golit coada.")
 
-    @app_commands.command(name="queue", description="Arată melodiile din coadă")
-    @app_commands.guild_only()
-    async def queue(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
-        player = self._player_for(interaction.guild)
+    @commands.hybrid_command(name="queue", aliases=["q"], description="Arată melodiile din coadă")
+    @commands.guild_only()
+    async def queue(self, ctx: commands.Context[DiscordBot]) -> None:
+        assert ctx.guild is not None
+        player = self._player_for(ctx.guild)
         if player is None or not player.is_active:
-            await interaction.response.send_message("Coada este goală. Adaugă ceva cu `/play`.", ephemeral=True)
+            await ctx.send("Coada este goală. Adaugă ceva cu `.play`.", ephemeral=True)
             return
 
         embed = discord.Embed(title="🎵 Coada de redare", color=discord.Color.red())
@@ -607,15 +596,15 @@ class Music(commands.Cog):
             text=f"{len(player.queue)} în coadă • durată {format_duration(total)} • "
             f"buclă: {player.loop_mode.value}"
         )
-        await interaction.response.send_message(embed=embed)
+        await ctx.send(embed=embed)
 
-    @app_commands.command(name="nowplaying", description="Arată melodia care se redă acum")
-    @app_commands.guild_only()
-    async def nowplaying(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
-        player = self._player_for(interaction.guild)
+    @commands.hybrid_command(name="nowplaying", aliases=["np"], description="Arată melodia care se redă acum")
+    @commands.guild_only()
+    async def nowplaying(self, ctx: commands.Context[DiscordBot]) -> None:
+        assert ctx.guild is not None
+        player = self._player_for(ctx.guild)
         if player is None or player.current is None:
-            await interaction.response.send_message("Nu se redă nimic acum.", ephemeral=True)
+            await ctx.send("Nu se redă nimic acum.", ephemeral=True)
             return
         vc = player.voice_client
         status = "⏸️ **Pe pauză**" if vc and vc.is_paused() else "🎶 **Acum se redă**"
@@ -624,55 +613,50 @@ class Music(commands.Cog):
             text=f"Volum: {round(player.volume * 100)}% • buclă: {player.loop_mode.value} • "
             f"{len(player.queue)} în coadă"
         )
-        await interaction.response.send_message(embed=embed)
+        await ctx.send(embed=embed)
 
-    @app_commands.command(name="volume", description="Setează volumul (0–100)")
+    @commands.hybrid_command(name="volume", aliases=["vol"], description="Setează volumul (0–100)")
     @app_commands.describe(nivel="Volumul dorit, între 0 și 100 (gol = arată volumul curent)")
-    @app_commands.guild_only()
+    @commands.guild_only()
     @same_voice_channel()
     async def volume(
-        self, interaction: discord.Interaction, nivel: app_commands.Range[int, 0, 100] | None = None
+        self, ctx: commands.Context[DiscordBot], nivel: commands.Range[int, 0, 100] | None = None
     ) -> None:
-        player = self._require_player(interaction)
+        player = self._require_player(ctx)
         if nivel is None:
-            await interaction.response.send_message(f"🔊 Volumul curent este **{round(player.volume * 100)}%**.")
+            await ctx.send(f"🔊 Volumul curent este **{round(player.volume * 100)}%**.")
             return
         player.set_volume(nivel / 100)
         icon = "🔇" if nivel == 0 else "🔉" if nivel < 50 else "🔊"
-        await interaction.response.send_message(f"{icon} Volumul este acum **{nivel}%**.")
+        await ctx.send(f"{icon} Volumul este acum **{nivel}%**.")
 
-    @app_commands.command(name="loop", description="Repetă melodia curentă sau toată coada")
-    @app_commands.describe(mod="Ce să repet (gol = trece la următorul mod)")
-    @app_commands.choices(
-        mod=[
-            app_commands.Choice(name="oprit", value="off"),
-            app_commands.Choice(name="melodia curentă", value="track"),
-            app_commands.Choice(name="toată coada", value="queue"),
-        ]
-    )
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="loop", description="Repetă melodia curentă sau toată coada")
+    @app_commands.describe(mod="oprit, melodie sau coada (gol = trece la următorul mod)")
+    @commands.guild_only()
     @same_voice_channel()
-    async def loop(self, interaction: discord.Interaction, mod: app_commands.Choice[str] | None = None) -> None:
-        player = self._require_player(interaction)
+    async def loop(
+        self, ctx: commands.Context[DiscordBot], mod: Literal["oprit", "melodie", "coada"] | None = None
+    ) -> None:
+        player = self._require_player(ctx)
         if mod is None:
             order = [LoopMode.OFF, LoopMode.TRACK, LoopMode.QUEUE]
             player.loop_mode = order[(order.index(player.loop_mode) + 1) % len(order)]
         else:
-            player.loop_mode = {"off": LoopMode.OFF, "track": LoopMode.TRACK, "queue": LoopMode.QUEUE}[mod.value]
+            player.loop_mode = {"oprit": LoopMode.OFF, "melodie": LoopMode.TRACK, "coada": LoopMode.QUEUE}[mod]
         icon = "➡️" if player.loop_mode is LoopMode.OFF else "🔂" if player.loop_mode is LoopMode.TRACK else "🔁"
-        await interaction.response.send_message(f"{icon} Buclă: **{player.loop_mode.value}**.")
+        await ctx.send(f"{icon} Buclă: **{player.loop_mode.value}**.")
 
-    @app_commands.command(name="leave", description="Scoate botul de pe canalul de voce")
-    @app_commands.guild_only()
+    @commands.hybrid_command(name="leave", aliases=["disconnect"], description="Scoate botul de pe canalul de voce")
+    @commands.guild_only()
     @same_voice_channel()
-    async def leave(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
-        player = self._player_for(interaction.guild)
-        await interaction.response.send_message("👋 Am ieșit de pe canal. Pe curând!")
+    async def leave(self, ctx: commands.Context[DiscordBot]) -> None:
+        assert ctx.guild is not None
+        player = self._player_for(ctx.guild)
+        await ctx.send("👋 Am ieșit de pe canal. Pe curând!")
         if player:
             await player.destroy()
-        elif interaction.guild.voice_client:
-            await interaction.guild.voice_client.disconnect(force=True)
+        elif ctx.guild.voice_client:
+            await ctx.guild.voice_client.disconnect(force=True)
 
 
 async def setup(bot: DiscordBot) -> None:

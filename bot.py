@@ -1,4 +1,7 @@
-"""Punctul de intrare al botului: configurare, baza de date, încărcarea cogs și sincronizarea comenzilor."""
+"""Punctul de intrare al botului: configurare, baza de date, încărcarea cogs și sincronizarea comenzilor.
+
+Comenzile sunt hibride: merg atât cu prefixul `.` (ex. `.ping`), cât și ca slash commands (`/ping`).
+"""
 
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bot.db"
+PREFIX = "."
 
 EXTENSIONS: tuple[str, ...] = (
     "cogs.xp",
@@ -34,11 +38,13 @@ class DiscordBot(commands.Bot):
         intents.guild_messages = True  # evenimentul on_message pentru XP (fără conținutul mesajelor)
         intents.voice_states = True    # cine e pe ce canal de voce (muzică)
         intents.members = True         # privilegiat: necesar pentru mesajul de bun venit
+        intents.message_content = True  # privilegiat: necesar pentru comenzile cu prefix (.ping)
 
         super().__init__(
-            command_prefix=commands.when_mentioned,  # botul folosește doar slash commands
+            command_prefix=commands.when_mentioned_or(PREFIX),
+            case_insensitive=True,
             intents=intents,
-            help_command=None,
+            help_command=None,  # avem propriul .help, în română
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
         )
         self.guild_id = guild_id
@@ -53,7 +59,6 @@ class DiscordBot(commands.Bot):
         self.db = await aiosqlite.connect(self.db_path)
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
-        self.tree.on_error = self.on_app_command_error
         for extension in EXTENSIONS:
             await self.load_extension(extension)
             log.info("Extensie încărcată: %s", extension)
@@ -77,33 +82,68 @@ class DiscordBot(commands.Bot):
         if hasattr(self, "db"):
             await self.db.close()
 
-    async def on_app_command_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ) -> None:
-        if isinstance(error, app_commands.CommandOnCooldown):
-            message = f"Încetinește puțin! Încearcă din nou peste {error.retry_after:.0f} secunde."
-        elif isinstance(error, app_commands.MissingPermissions):
-            message = "Nu ai permisiunile necesare pentru această comandă."
-        elif isinstance(error, app_commands.BotMissingPermissions):
-            missing = ", ".join(error.missing_permissions)
-            message = f"Îmi lipsesc permisiunile necesare: `{missing}`."
-        elif isinstance(error, app_commands.NoPrivateMessage):
-            message = "Această comandă poate fi folosită doar pe un server."
-        elif type(error) is app_commands.CheckFailure:
-            # Verificările proprii (ex. cele de la muzică) au deja mesajul în română.
-            message = str(error) or "Nu poți folosi această comandă acum."
+    async def on_command_error(self, ctx: commands.Context[DiscordBot], error: commands.CommandError) -> None:
+        # Erorile venite din partea de slash command sunt împachetate; le despachetăm.
+        if isinstance(error, commands.HybridCommandError):
+            original: Exception = error.original
+            if isinstance(original, app_commands.CommandInvokeError):
+                original = original.original
+        elif isinstance(error, commands.CommandInvokeError):
+            original = error.original
         else:
-            command = interaction.command.qualified_name if interaction.command else "?"
-            log.exception("Eroare în comanda /%s", command, exc_info=error)
+            original = error
+
+        if isinstance(original, commands.CommandNotFound):
+            return  # ex. mesaje care încep cu „...”; le ignorăm
+        message = self._error_message(ctx, original)
+        if message is None:
+            command = ctx.command.qualified_name if ctx.command else "?"
+            log.error("Eroare în comanda %s", command, exc_info=original)
             message = "A apărut o eroare neașteptată. Încearcă din nou mai târziu."
 
         try:
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
+            await ctx.send(message, ephemeral=True)
         except discord.HTTPException:
             pass
+
+    @staticmethod
+    def _error_message(ctx: commands.Context[DiscordBot], error: BaseException) -> str | None:
+        usage = ""
+        if ctx.command:
+            text = f"{PREFIX}{ctx.command.qualified_name} {ctx.command.signature}".strip()
+            usage = f"`{text}`"
+        if isinstance(error, (commands.CommandOnCooldown, app_commands.CommandOnCooldown)):
+            return f"Încetinește puțin! Încearcă din nou peste {error.retry_after:.0f} secunde."
+        if isinstance(error, (commands.MissingPermissions, app_commands.MissingPermissions)):
+            return "Nu ai permisiunile necesare pentru această comandă."
+        if isinstance(error, (commands.BotMissingPermissions, app_commands.BotMissingPermissions)):
+            return f"Îmi lipsesc permisiunile necesare: `{', '.join(error.missing_permissions)}`."
+        if isinstance(error, (commands.NoPrivateMessage, app_commands.NoPrivateMessage)):
+            return "Această comandă poate fi folosită doar pe un server."
+        if isinstance(error, commands.MissingRequiredArgument):
+            return f"Lipsește `{error.param.name}`. Folosire: {usage}"
+        if isinstance(error, commands.TooManyArguments):
+            return f"Prea multe argumente. Folosire: {usage}"
+        if isinstance(error, commands.MemberNotFound):
+            return f"Nu am găsit membrul `{error.argument}`."
+        if isinstance(error, commands.UserNotFound):
+            return f"Nu am găsit utilizatorul `{error.argument}`."
+        if isinstance(error, commands.RoleNotFound):
+            return f"Nu am găsit rolul `{error.argument}`."
+        if isinstance(error, commands.ChannelNotFound):
+            return f"Nu am găsit canalul `{error.argument}`."
+        if isinstance(error, commands.RangeError):
+            unit = "caractere" if isinstance(error.value, str) else "valoare"
+            return f"Valoare în afara limitelor ({unit}: între {error.minimum} și {error.maximum}). Folosire: {usage}"
+        if isinstance(error, commands.BadLiteralArgument):
+            options = ", ".join(f"`{literal}`" for literal in error.literals)
+            return f"Valoare invalidă pentru `{error.param.name}`. Opțiuni: {options}."
+        if isinstance(error, (commands.BadArgument, commands.ArgumentParsingError)):
+            return f"Argument invalid. Folosire: {usage}"
+        if type(error) in (commands.CheckFailure, app_commands.CheckFailure):
+            # Verificările proprii (ex. cele de la muzică) au deja mesajul în română.
+            return str(error) or "Nu poți folosi această comandă acum."
+        return None
 
 
 def main() -> None:
@@ -126,7 +166,8 @@ def main() -> None:
         sys.exit("Tokenul este invalid. Generează altul din Developer Portal (Bot → Reset Token).")
     except discord.PrivilegedIntentsRequired:
         sys.exit(
-            "Activează „Server Members Intent” din Developer Portal (Bot → Privileged Gateway Intents)."
+            "Activează „Server Members Intent” și „Message Content Intent” din Developer Portal "
+            "(Bot → Privileged Gateway Intents)."
         )
 
 

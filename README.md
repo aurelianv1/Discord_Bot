@@ -1,25 +1,42 @@
 # Discord Bot
 
-Bot de Discord în Python, pentru un server personal: **XP și nivele**, **muzică de pe YouTube** și **comenzi utilitare**. Toate comenzile sunt slash commands (`/`), iar mesajele sunt în română.
+Bot de Discord în Python, pentru un server personal: **XP și nivele**, **muzică de pe YouTube** și **comenzi utilitare**. Mesajele sunt în română.
+
+Fiecare comandă merge în două feluri: cu **punct** (`.ping`, `.play numele melodiei`) sau ca **slash command** (`/ping`), cu meniu de sugestii. Scrie `.help` pentru lista completă.
 
 Botul are nevoie de un singur secret, tokenul de Discord (gratuit). Nu folosește chei de API și niciun serviciu cu plată: merge doar cu discord.py, yt-dlp și FFmpeg.
 
 ## Comenzi
 
+Toate comenzile de mai jos merg și cu `/` în loc de `.`. `<...>` înseamnă obligatoriu, `[...]` opțional.
+
 | Categorie | Comandă | Descriere |
 |---|---|---|
-| XP | `/rank [membru]` | Nivel, loc în clasament, XP total și bară de progres |
-| XP | `/leaderboard` | Top 10 pe server |
-| XP | `/levelrole add <nivel> <rol>` · `remove <rol>` · `list` | Roluri date automat la anumite nivele *(doar cu Manage Roles)* |
-| Muzică | `/play <link sau nume>` | Caută pe YouTube și redă (sau adaugă în coadă) |
-| Muzică | `/skip` · `/pause` · `/resume` · `/stop` | Controlul redării |
-| Muzică | `/queue` · `/nowplaying` | Coada și melodia curentă |
-| Muzică | `/volume [0–100]` · `/loop [mod]` · `/leave` | Volum, buclă (oprit / melodia curentă / toată coada), ieșire |
-| Utilitare | `/setwelcome <canal>` · `/welcomeoff` | Mesaj de bun venit *(doar cu Manage Server)* |
-| Utilitare | `/ping` · `/avatar` · `/userinfo` · `/serverinfo` | Informații |
-| Utilitare | `/poll <întrebare> <opțiune1> <opțiune2> [3] [4]` | Sondaj cu reacții numerotate |
-| Utilitare | `/8ball` · `/coinflip` · `/dice [fete] [numar]` | Distracție |
-| Utilitare | `/remind <minute> <text>` | Reminder (maxim 7 zile, rezistă la repornirea botului) |
+| Ajutor | `.help` | Lista tuturor comenzilor |
+| XP | `.rank [membru]` | Nivel, loc în clasament, XP total și bară de progres |
+| XP | `.leaderboard` (`.top`) | Top 10 pe server |
+| XP | `.levelrole` · `.levelrole add <nivel> <rol>` · `.levelrole remove <rol>` | Roluri date automat la anumite nivele *(doar cu Manage Roles)* |
+| Muzică | `.play <link sau nume>` (`.p`) | Caută pe YouTube și redă (sau adaugă în coadă) |
+| Muzică | `.skip` (`.s`) · `.pause` · `.resume` · `.stop` | Controlul redării |
+| Muzică | `.queue` (`.q`) · `.nowplaying` (`.np`) | Coada și melodia curentă |
+| Muzică | `.volume [0–100]` · `.loop [oprit\|melodie\|coada]` · `.leave` | Volum, buclă, ieșire |
+| Utilitare | `.setwelcome <canal>` · `.welcomeoff` | Mesaj de bun venit *(doar cu Manage Server)* |
+| Utilitare | `.ping` · `.avatar` · `.userinfo` · `.serverinfo` | Informații |
+| Utilitare | `.poll "întrebare" "opțiune1" "opțiune2" ["3"] ["4"]` | Sondaj cu reacții numerotate |
+| Utilitare | `.8ball <întrebare>` · `.coinflip` · `.dice [fete] [numar]` | Distracție |
+| Utilitare | `.remind <minute> <text>` | Reminder (maxim 7 zile, rezistă la repornirea botului) |
+
+Exemple:
+
+```
+.play never gonna give you up
+.remind 10 scoate pizza din cuptor
+.poll "Ce mâncăm?" Pizza Paste "Supă de pui"
+.levelrole add 5 @Activ
+.loop melodie
+```
+
+La `.poll`, pune ghilimele în jurul textelor care conțin spații.
 
 **Cum funcționează XP-ul:** fiecare mesaj aduce între 15 și 25 XP, cel mult o dată la 60 de secunde per utilizator. Pentru a trece de la nivelul *n* la *n+1* ai nevoie de `5·n² + 50·n + 100` XP. XP-ul se ține separat pe fiecare server.
 
@@ -44,7 +61,7 @@ Botul are nevoie de un singur secret, tokenul de Discord (gratuit). Nu foloseșt
 Tot în pagina **Bot**, la secțiunea **Privileged Gateway Intents**:
 
 - ✅ **Server Members Intent**: **activează-l**, e necesar pentru mesajul de bun venit.
-- ⬜ **Message Content Intent**: nu e necesar. Botul doar numără mesajele pentru XP, nu le citește conținutul.
+- ✅ **Message Content Intent**: **activează-l**, e necesar pentru comenzile cu punct (`.ping`). Fără el, botul nu vede textul mesajelor.
 - ⬜ **Presence Intent**: nu e necesar.
 
 Apasă **Save Changes**.
@@ -129,11 +146,11 @@ Când pornește corect, în consolă apar mesaje de tipul:
 Extensie încărcată: cogs.xp
 Extensie încărcată: cogs.music
 Extensie încărcată: cogs.utility
-24 comenzi sincronizate pe serverul 123456789012345678 (instant).
+25 comenzi sincronizate pe serverul 123456789012345678 (instant).
 Conectat ca Botul meu#1234 ...
 ```
 
-Scrie `/` pe server și ar trebui să vezi comenzile botului. Datele (XP, roluri de nivel, canalul de bun venit, remindere) sunt salvate în `bot.db`, lângă `bot.py`. Oprești botul cu `Ctrl+C`.
+Scrie `.help` pe server (sau `/` ca să vezi meniul de comenzi). Datele (XP, roluri de nivel, canalul de bun venit, remindere) sunt salvate în `bot.db`, lângă `bot.py`. Oprești botul cu `Ctrl+C`.
 
 ### 7. Rulează testele (opțional)
 
@@ -159,9 +176,10 @@ Fă asta periodic, de exemplu o dată pe săptămână, și repornește botul du
 
 | Problemă | Soluție |
 |---|---|
-| Nu apar comenzile | Completează `GUILD_ID` în `.env` și repornește botul. Verifică dacă ai bifat `applications.commands` la invitare. Repornește Discord cu `Ctrl+R`. |
+| Nu apar comenzile `/` | Completează `GUILD_ID` în `.env` și repornește botul. Verifică dacă ai bifat `applications.commands` la invitare. Repornește Discord cu `Ctrl+R`. |
 | `Lipsește DISCORD_TOKEN` | Fișierul `.env` lipsește sau nu e lângă `bot.py`. |
-| Eroare `PrivilegedIntentsRequired` la pornire | Activează **Server Members Intent** (pasul 2). |
+| Botul cere să activezi intents la pornire | Activează **Server Members Intent** și **Message Content Intent** (pasul 2). |
+| `.ping` nu răspunde, dar `/ping` merge | **Message Content Intent** nu e activat (pasul 2), sau botul nu are acces la canal. |
 | `/play` spune că nu poate porni FFmpeg | FFmpeg nu e instalat sau nu e în PATH (pasul 4). |
 | `/play` găsește melodia, dar nu se aude nimic | Actualizează yt-dlp și verifică dacă ai instalat Deno (pasul 4). |
 | Nu se acordă rolurile de nivel | Mută rolul botului deasupra rolurilor de nivel și verifică permisiunea Manage Roles. |

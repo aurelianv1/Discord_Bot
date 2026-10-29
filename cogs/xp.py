@@ -57,13 +57,6 @@ def progress_bar(current: int, needed: int, length: int = 12) -> str:
 # --- Cog ---------------------------------------------------------------------------
 
 class XP(commands.Cog):
-    levelrole = app_commands.Group(
-        name="levelrole",
-        description="Roluri acordate automat la anumite nivele",
-        guild_only=True,
-        default_permissions=discord.Permissions(manage_roles=True),
-    )
-
     def __init__(self, bot: DiscordBot) -> None:
         self.bot = bot
         self._cooldowns: dict[tuple[int, int], float] = {}
@@ -162,22 +155,19 @@ class XP(commands.Cog):
 
     # --- Comenzi -------------------------------------------------------------------
 
-    @app_commands.command(name="rank", description="Arată nivelul și XP-ul unui membru")
+    @commands.hybrid_command(name="rank", description="Arată nivelul și XP-ul unui membru")
     @app_commands.describe(membru="Membrul pentru care vrei să vezi rangul (implicit tu)")
-    @app_commands.guild_only()
-    async def rank(
-        self, interaction: discord.Interaction, membru: discord.Member | None = None
-    ) -> None:
-        assert interaction.guild is not None
-        target = membru or interaction.user
+    @commands.guild_only()
+    async def rank(self, ctx: commands.Context[DiscordBot], membru: discord.Member | None = None) -> None:
+        assert ctx.guild is not None
+        target = membru or ctx.author
         if target.bot:
-            await interaction.response.send_message("Boții nu primesc XP. 🤖", ephemeral=True)
+            await ctx.send("Boții nu primesc XP. 🤖", ephemeral=True)
             return
 
         db = self.bot.db
         async with db.execute(
-            "SELECT xp FROM xp WHERE guild_id = ? AND user_id = ?",
-            (interaction.guild.id, target.id),
+            "SELECT xp FROM xp WHERE guild_id = ? AND user_id = ?", (ctx.guild.id, target.id)
         ) as cursor:
             row = await cursor.fetchone()
         total_xp = int(row["xp"]) if row else 0
@@ -186,7 +176,7 @@ class XP(commands.Cog):
         if row:
             async with db.execute(
                 "SELECT COUNT(*) + 1 AS pos FROM xp WHERE guild_id = ? AND xp > ?",
-                (interaction.guild.id, total_xp),
+                (ctx.guild.id, total_xp),
             ) as cursor:
                 pos_row = await cursor.fetchone()
             position_text = f"#{pos_row['pos']}" if pos_row else "—"
@@ -204,22 +194,19 @@ class XP(commands.Cog):
             value=f"{progress_bar(current, needed)} {percent}%\n{current} / {needed} XP",
             inline=False,
         )
-        await interaction.response.send_message(embed=embed)
+        await ctx.send(embed=embed)
 
-    @app_commands.command(name="leaderboard", description="Top 10 membri după XP pe acest server")
-    @app_commands.guild_only()
-    async def leaderboard(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
+    @commands.hybrid_command(name="leaderboard", aliases=["top"], description="Top 10 membri după XP pe acest server")
+    @commands.guild_only()
+    async def leaderboard(self, ctx: commands.Context[DiscordBot]) -> None:
+        assert ctx.guild is not None
         async with self.bot.db.execute(
-            "SELECT user_id, xp FROM xp WHERE guild_id = ? ORDER BY xp DESC LIMIT 10",
-            (interaction.guild.id,),
+            "SELECT user_id, xp FROM xp WHERE guild_id = ? ORDER BY xp DESC LIMIT 10", (ctx.guild.id,)
         ) as cursor:
             rows = await cursor.fetchall()
 
         if not rows:
-            await interaction.response.send_message(
-                "Nimeni nu are încă XP pe acest server. Scrieți câteva mesaje! 💬"
-            )
+            await ctx.send("Nimeni nu are încă XP pe acest server. Scrieți câteva mesaje! 💬")
             return
 
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -231,35 +218,60 @@ class XP(commands.Cog):
             )
 
         embed = discord.Embed(
-            title=f"🏆 Clasament — {interaction.guild.name}",
+            title=f"🏆 Clasament — {ctx.guild.name}",
             description="\n".join(lines),
             color=discord.Color.gold(),
         )
-        await interaction.response.send_message(embed=embed)
+        await ctx.send(embed=embed)
+
+    # `.levelrole` singur (sau `/levelrole list`) afișează lista.
+    @commands.hybrid_group(
+        name="levelrole",
+        fallback="list",
+        invoke_without_command=True,
+        description="Arată rolurile acordate automat pe nivele",
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
+    async def levelrole(self, ctx: commands.Context[DiscordBot]) -> None:
+        assert ctx.guild is not None
+        async with self.bot.db.execute(
+            "SELECT role_id, level FROM level_roles WHERE guild_id = ? ORDER BY level, role_id",
+            (ctx.guild.id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        if not rows:
+            await ctx.send("Nu există roluri de nivel. Adaugă unul cu `.levelrole add <nivel> <rol>`.", ephemeral=True)
+            return
+
+        lines = []
+        for row in rows:
+            role = ctx.guild.get_role(row["role_id"])
+            role_text = role.mention if role else f"*rol șters* (`{row['role_id']}`)"
+            lines.append(f"Nivel **{row['level']}** → {role_text}")
+        embed = discord.Embed(title="Roluri de nivel", description="\n".join(lines), color=discord.Color.green())
+        await ctx.send(embed=embed, ephemeral=True)
 
     @levelrole.command(name="add", description="Acordă automat un rol la atingerea unui nivel")
     @app_commands.describe(nivel="Nivelul la care se acordă rolul", rol="Rolul acordat")
+    @commands.has_permissions(manage_roles=True)
     async def levelrole_add(
-        self,
-        interaction: discord.Interaction,
-        nivel: app_commands.Range[int, 1, MAX_LEVEL],
-        rol: discord.Role,
+        self, ctx: commands.Context[DiscordBot], nivel: commands.Range[int, 1, MAX_LEVEL], rol: discord.Role
     ) -> None:
-        assert interaction.guild is not None
-        me = interaction.guild.me
+        assert ctx.guild is not None
+        me = ctx.guild.me
         if rol.is_default() or rol.managed:
-            await interaction.response.send_message(
-                "Acest rol nu poate fi acordat (e @everyone sau e gestionat de o integrare).",
-                ephemeral=True,
+            await ctx.send(
+                "Acest rol nu poate fi acordat (e @everyone sau e gestionat de o integrare).", ephemeral=True
             )
             return
         if not me.guild_permissions.manage_roles:
-            await interaction.response.send_message(
-                "Am nevoie de permisiunea **Manage Roles** ca să pot acorda roluri.", ephemeral=True
-            )
+            await ctx.send("Am nevoie de permisiunea **Manage Roles** ca să pot acorda roluri.", ephemeral=True)
             return
         if rol >= me.top_role:
-            await interaction.response.send_message(
+            await ctx.send(
                 f"Nu pot acorda {rol.mention}, pentru că este deasupra (sau la nivelul) celui mai "
                 "înalt rol al meu. Mută rolul botului mai sus în setările serverului.",
                 ephemeral=True,
@@ -271,10 +283,10 @@ class XP(commands.Cog):
             INSERT INTO level_roles (guild_id, role_id, level) VALUES (?, ?, ?)
             ON CONFLICT (guild_id, role_id) DO UPDATE SET level = excluded.level
             """,
-            (interaction.guild.id, rol.id, nivel),
+            (ctx.guild.id, rol.id, nivel),
         )
         await self.bot.db.commit()
-        await interaction.response.send_message(
+        await ctx.send(
             f"✅ {rol.mention} va fi acordat la nivelul **{nivel}**. Membrii care au deja acest "
             "nivel îl vor primi la următorul lor level up.",
             ephemeral=True,
@@ -282,43 +294,18 @@ class XP(commands.Cog):
 
     @levelrole.command(name="remove", description="Elimină un rol din lista rolurilor de nivel")
     @app_commands.describe(rol="Rolul care nu va mai fi acordat automat")
-    async def levelrole_remove(self, interaction: discord.Interaction, rol: discord.Role) -> None:
-        assert interaction.guild is not None
+    @commands.has_permissions(manage_roles=True)
+    async def levelrole_remove(self, ctx: commands.Context[DiscordBot], rol: discord.Role) -> None:
+        assert ctx.guild is not None
         cursor = await self.bot.db.execute(
-            "DELETE FROM level_roles WHERE guild_id = ? AND role_id = ?",
-            (interaction.guild.id, rol.id),
+            "DELETE FROM level_roles WHERE guild_id = ? AND role_id = ?", (ctx.guild.id, rol.id)
         )
         await self.bot.db.commit()
         if cursor.rowcount:
             message = f"🗑️ {rol.mention} nu mai este rol de nivel. (Membrii care îl au deja îl păstrează.)"
         else:
             message = f"{rol.mention} nu era configurat ca rol de nivel."
-        await interaction.response.send_message(message, ephemeral=True)
-
-    @levelrole.command(name="list", description="Arată rolurile acordate automat pe nivele")
-    async def levelrole_list(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
-        async with self.bot.db.execute(
-            "SELECT role_id, level FROM level_roles WHERE guild_id = ? ORDER BY level, role_id",
-            (interaction.guild.id,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-
-        if not rows:
-            await interaction.response.send_message(
-                "Nu există roluri de nivel. Adaugă unul cu `/levelrole add`.", ephemeral=True
-            )
-            return
-
-        lines = []
-        for row in rows:
-            role = interaction.guild.get_role(row["role_id"])
-            role_text = role.mention if role else f"*rol șters* (`{row['role_id']}`)"
-            lines.append(f"Nivel **{row['level']}** → {role_text}")
-        embed = discord.Embed(
-            title="Roluri de nivel", description="\n".join(lines), color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await ctx.send(message, ephemeral=True)
 
 
 async def setup(bot: DiscordBot) -> None:
