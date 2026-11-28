@@ -93,8 +93,6 @@ class Utility(commands.Cog):
     async def cog_unload(self) -> None:
         self.deliver_reminders.cancel()
 
-    # --- Bun venit -----------------------------------------------------------------
-
     @commands.hybrid_command(name="setwelcome", description="Setează canalul pentru mesajele de bun venit")
     @app_commands.describe(canal="Canalul în care salut membrii noi")
     @commands.guild_only()
@@ -160,8 +158,6 @@ class Utility(commands.Cog):
         except discord.HTTPException as exc:
             log.warning("Nu pot trimite mesajul de bun venit pe %s: %s", member.guild, exc)
 
-    # --- Ajutor --------------------------------------------------------------------
-
     @commands.hybrid_command(name="help", aliases=["ajutor", "comenzi"], description="Arată lista comenzilor")
     async def help(self, ctx: commands.Context[DiscordBot]) -> None:
         embed = discord.Embed(
@@ -183,8 +179,6 @@ class Utility(commands.Cog):
             for index, chunk in enumerate(_chunk_lines(lines, 1024)):
                 embed.add_field(name=label if index == 0 else "\u200b", value=chunk, inline=False)
         await ctx.send(embed=embed, ephemeral=True)
-
-    # --- Informații ----------------------------------------------------------------
 
     @commands.hybrid_command(name="ping", description="Verifică latența botului")
     async def ping(self, ctx: commands.Context[DiscordBot]) -> None:
@@ -252,8 +246,6 @@ class Utility(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    # --- Sondaje -------------------------------------------------------------------
-
     @commands.hybrid_command(
         name="poll",
         description="Creează un sondaj cu 2–4 opțiuni",
@@ -291,8 +283,6 @@ class Utility(commands.Cog):
                 ephemeral=True,
             )
 
-    # --- Distracție ----------------------------------------------------------------
-
     @commands.hybrid_command(name="8ball", description="Pune o întrebare globului magic")
     @app_commands.describe(intrebare="Întrebarea ta")
     async def eight_ball(self, ctx: commands.Context[DiscordBot], *, intrebare: commands.Range[str, 1, 256]) -> None:
@@ -318,8 +308,6 @@ class Utility(commands.Cog):
             text = f"🎲 {numar} zaruri cu {fete} fețe: {', '.join(map(str, rolls))} — total **{sum(rolls)}**."
         await ctx.send(text)
 
-    # --- Remindere -----------------------------------------------------------------
-
     @commands.hybrid_command(name="remind", aliases=["reminder"], description="Îți amintesc ceva peste un număr de minute")
     @app_commands.describe(minute="Peste câte minute (maxim 7 zile)", text="Ce să-ți amintesc")
     async def remind(
@@ -340,7 +328,6 @@ class Utility(commands.Cog):
 
     @tasks.loop(seconds=10)
     async def deliver_reminders(self) -> None:
-        # O excepție neprinsă ar opri bucla definitiv, așa că o prindem și reîncercăm la următorul tur.
         try:
             async with self.bot.db.execute(
                 "SELECT id, user_id, channel_id, text FROM reminders WHERE due_at <= ? ORDER BY due_at",
@@ -361,7 +348,6 @@ class Utility(commands.Cog):
 
     async def _send_reminder(self, user_id: int, channel_id: int, text: str) -> None:
         content = f"⏰ <@{user_id}>, îți amintesc: {text}"
-        # Pingăm doar persoana care a cerut reminder-ul, chiar dacă textul conține alte mențiuni.
         mentions = discord.AllowedMentions(everyone=False, roles=False, users=[discord.Object(user_id)])
         try:
             channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)

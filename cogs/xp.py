@@ -22,8 +22,6 @@ XP_COOLDOWN_SECONDS = 60.0
 MAX_LEVEL = 1000
 
 
-# --- Logică pură (testată în tests/test_levels.py) ---------------------------------
-
 def xp_to_next_level(level: int) -> int:
     """XP necesar pentru a trece de la nivelul `level` la `level + 1`."""
     return 5 * level**2 + 50 * level + 100
@@ -54,8 +52,6 @@ def progress_bar(current: int, needed: int, length: int = 12) -> str:
     return "▰" * filled + "▱" * (length - filled)
 
 
-# --- Cog ---------------------------------------------------------------------------
-
 class XP(commands.Cog):
     def __init__(self, bot: DiscordBot) -> None:
         self.bot = bot
@@ -81,8 +77,6 @@ class XP(commands.Cog):
             """
         )
         await self.bot.db.commit()
-
-    # --- Acordarea XP --------------------------------------------------------------
 
     def _on_cooldown(self, guild_id: int, user_id: int) -> bool:
         now = time.monotonic()
@@ -153,8 +147,6 @@ class XP(commands.Cog):
         except discord.HTTPException as exc:
             log.warning("Nu pot acorda roluri de nivel lui %s: %s", member, exc)
 
-    # --- Comenzi -------------------------------------------------------------------
-
     @commands.hybrid_command(name="rank", description="Arată nivelul și XP-ul unui membru")
     @app_commands.describe(membru="Membrul pentru care vrei să vezi rangul (implicit tu)")
     @commands.guild_only()
@@ -224,7 +216,6 @@ class XP(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    # `.levelrole` singur (sau `/levelrole list`) afișează lista.
     @commands.hybrid_group(
         name="levelrole",
         fallback="list",

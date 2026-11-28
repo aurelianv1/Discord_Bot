@@ -34,17 +34,17 @@ class DiscordBot(commands.Bot):
 
     def __init__(self, guild_id: int | None = None, db_path: Path | str = DB_PATH) -> None:
         intents = discord.Intents.none()
-        intents.guilds = True          # canale, roluri, informații despre server
-        intents.guild_messages = True  # evenimentul on_message pentru XP (fără conținutul mesajelor)
-        intents.voice_states = True    # cine e pe ce canal de voce (muzică)
-        intents.members = True         # privilegiat: necesar pentru mesajul de bun venit
-        intents.message_content = True  # privilegiat: necesar pentru comenzile cu prefix (.ping)
+        intents.guilds = True
+        intents.guild_messages = True
+        intents.voice_states = True
+        intents.members = True
+        intents.message_content = True
 
         super().__init__(
             command_prefix=commands.when_mentioned_or(PREFIX),
             case_insensitive=True,
             intents=intents,
-            help_command=None,  # avem propriul .help, în română
+            help_command=None,
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
         )
         self.guild_id = guild_id
@@ -83,7 +83,6 @@ class DiscordBot(commands.Bot):
             await self.db.close()
 
     async def on_command_error(self, ctx: commands.Context[DiscordBot], error: commands.CommandError) -> None:
-        # Erorile venite din partea de slash command sunt împachetate; le despachetăm.
         if isinstance(error, commands.HybridCommandError):
             original: Exception = error.original
             if isinstance(original, app_commands.CommandInvokeError):
@@ -94,7 +93,7 @@ class DiscordBot(commands.Bot):
             original = error
 
         if isinstance(original, commands.CommandNotFound):
-            return  # ex. mesaje care încep cu „...”; le ignorăm
+            return
         message = self._error_message(ctx, original)
         if message is None:
             command = ctx.command.qualified_name if ctx.command else "?"
@@ -141,7 +140,6 @@ class DiscordBot(commands.Bot):
         if isinstance(error, (commands.BadArgument, commands.ArgumentParsingError)):
             return f"Argument invalid. Folosire: {usage}"
         if type(error) in (commands.CheckFailure, app_commands.CheckFailure):
-            # Verificările proprii (ex. cele de la muzică) au deja mesajul în română.
             return str(error) or "Nu poți folosi această comandă acum."
         return None
 

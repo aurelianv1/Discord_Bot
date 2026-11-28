@@ -25,12 +25,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-IDLE_TIMEOUT = 300          # secunde fără nimic în coadă până la ieșirea de pe canal
-ALONE_TIMEOUT = 30          # secunde de așteptare când botul rămâne singur pe canal
-INFO_MAX_AGE = 1800         # linkurile de stream YouTube expiră; după 30 min extragem din nou
+IDLE_TIMEOUT = 300
+ALONE_TIMEOUT = 30
+INFO_MAX_AGE = 1800
 MAX_QUEUE_SIZE = 100
 
-# YouTube cere un runtime JavaScript; yt-dlp îl folosește pe primul găsit dintre acestea.
 JS_RUNTIMES = ("deno", "node", "bun")
 
 YTDL_OPTIONS: dict[str, Any] = {
@@ -42,9 +41,6 @@ YTDL_OPTIONS: dict[str, Any] = {
     "default_search": "ytsearch",
     "js_runtimes": {runtime: {} for runtime in JS_RUNTIMES},
 }
-# Pentru redare, yt-dlp descarcă el însuși streamul (cu headerele și reîncercările de care
-# YouTube are nevoie) și îl trimite prin pipe către FFmpeg. Dacă FFmpeg accesează direct
-# linkul de stream, YouTube răspunde des cu 403 Forbidden.
 YTDL_STREAM_ARGS: tuple[str, ...] = (
     "--quiet",
     "--no-warnings",
@@ -53,10 +49,8 @@ YTDL_STREAM_ARGS: tuple[str, ...] = (
     *(arg for runtime in JS_RUNTIMES for arg in ("--js-runtimes", runtime)),
     "--output", "-",
 )
-# Câmpuri mari de care nu avem nevoie la redare (păstrăm coada mică în memorie).
 _UNUSED_INFO_KEYS = ("automatic_captions", "subtitles", "heatmap", "thumbnails", "chapters")
 
-# Referințe la task-urile lansate „în fundal”, ca să nu fie colectate de garbage collector.
 _background_tasks: set[asyncio.Task[None]] = set()
 
 
@@ -140,10 +134,9 @@ class YTDLAudio(discord.FFmpegPCMAudio):
     def __init__(self, track: Track) -> None:
         self._info_path: str | None = None
         self._cleaned = False
-        self._exit_code: int | None = None  # codul yt-dlp văzut înainte să oprim noi ceva
+        self._exit_code: int | None = None
         args = [sys.executable, "-m", "yt_dlp", *YTDL_STREAM_ARGS]
         if time.monotonic() - track.extracted_at < INFO_MAX_AGE:
-            # Refolosim informațiile de la /play, ca redarea să pornească mai repede.
             fd, self._info_path = tempfile.mkstemp(prefix="discord-bot-", suffix=".info.json")
             with os.fdopen(fd, "w", encoding="utf-8") as file:
                 file.write(track.info_json)
@@ -158,8 +151,6 @@ class YTDLAudio(discord.FFmpegPCMAudio):
             self._stop_downloader()
             raise
         finally:
-            # FFmpeg are propria copie a pipe-ului; o închidem pe a noastră, ca yt-dlp
-            # să se oprească singur dacă FFmpeg se închide.
             assert self._downloader.stdout is not None
             self._downloader.stdout.close()
 
@@ -259,7 +250,6 @@ class GuildPlayer:
         return discord.PCMVolumeTransformer(YTDLAudio(track), volume=self.volume)
 
     def _after_playback(self, error: Exception | None) -> None:
-        # Rulează în thread-ul audio al discord.py, nu în event loop.
         if error:
             log.error("Eroare la redare pe %s: %s", self.guild, error)
         self._loop.call_soon_threadsafe(self._track_done.set)
@@ -347,8 +337,6 @@ class GuildPlayer:
                 log.exception("Eroare la deconectarea de pe canalul de voce pe %s", self.guild)
 
 
-# --- Verificări pentru comenzi ------------------------------------------------------
-
 def _connected_voice_client(ctx: commands.Context[DiscordBot]) -> discord.VoiceClient:
     vc = ctx.voice_client
     if not isinstance(vc, discord.VoiceClient) or vc.channel is None:
@@ -371,8 +359,6 @@ def same_voice_channel() -> Any:
 
     return commands.check(predicate)
 
-
-# --- Cog ---------------------------------------------------------------------------
 
 class Music(commands.Cog):
     def __init__(self, bot: DiscordBot) -> None:
@@ -397,8 +383,6 @@ class Music(commands.Cog):
             raise commands.CheckFailure("Nu se redă nimic acum.")
         return player
 
-    # --- Ieșirea automată când botul rămâne singur ---------------------------------
-
     @commands.Cog.listener()
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
@@ -406,7 +390,6 @@ class Music(commands.Cog):
         guild = member.guild
         assert self.bot.user is not None
         if member.id == self.bot.user.id and after.channel is None:
-            # Botul a fost deconectat (de noi sau de cineva de pe server).
             self._cancel_alone_timer(guild.id)
             player = self._player_for(guild)
             if player:
@@ -431,8 +414,6 @@ class Music(commands.Cog):
 
     async def _leave_if_alone(self, guild: discord.Guild) -> None:
         await asyncio.sleep(ALONE_TIMEOUT)
-        # Ne scoatem din evidență înainte de deconectare, ca evenimentul de voce
-        # declanșat de deconectare să nu anuleze acest task la jumătate.
         if self._alone_timers.get(guild.id) is asyncio.current_task():
             del self._alone_timers[guild.id]
         vc = guild.voice_client
@@ -446,8 +427,6 @@ class Music(commands.Cog):
             await player.destroy()
         else:
             await vc.disconnect(force=True)
-
-    # --- Comenzi -------------------------------------------------------------------
 
     @commands.hybrid_command(name="play", aliases=["p"], description="Redă o melodie de pe YouTube (link sau nume)")
     @app_commands.describe(cautare="Un link YouTube sau numele melodiei")
@@ -477,7 +456,6 @@ class Music(commands.Cog):
             await ctx.send(f"Coada este plină (maxim {MAX_QUEUE_SIZE} melodii).", ephemeral=True)
             return
 
-        # La slash command, typing() confirmă interacțiunea (căutarea poate dura câteva secunde).
         async with ctx.typing():
             try:
                 info = await extract_info(cautare)
